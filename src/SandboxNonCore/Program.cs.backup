@@ -1,0 +1,110 @@
+﻿using System;
+using System.Reflection;
+using System.Collections.Generic;
+using System.Text.RegularExpressions;
+using System.Linq.Dynamic;
+using System.Linq.Expressions;
+using DE = System.Linq.Dynamic.DynamicExpression;
+
+namespace ExpressionParser
+{
+    class Program
+    {
+        public class Person
+        {
+            public string Name { get; set; }
+            public int Age { get; set; }
+            public int Weight { get; set; }
+            public DateTime FavouriteDay { get; set; }
+
+            public Regex r;
+        }
+
+        static void Main()
+        {
+            TesterUnit();
+            Console.ReadKey();
+
+        }
+
+        static void TesterUnit()
+        {
+
+            //param 1, our 'IT'
+            var bob = new Person
+            {
+                Name = "Bob",
+                Age = 30,
+                Weight = 213,
+                FavouriteDay = new DateTime(2000, 1, 1)
+            };
+
+            //param 2, an type that covers any logic we need in our linq clause
+            var tester = Activator.CreateInstance(DynamicLinqCustomTypes<Person>.Tester);
+
+            //set query-specific logic we want
+            tester.SetTester(new Func<Person, bool>(person => Regex.IsMatch(person.Name,"(?i)bob") && ((person.Age > 3 && person.Weight > 50) || person.Age < 3)));
+
+            Func<bool> query = () =>
+            {
+                var parameters = new { bob, tester };
+                var q = PrepareDynamicLinq(@"tester.get_IsMatch(bob)", parameters);
+                return (bool)q.Compile().DynamicInvoke(bob, tester);
+            };
+
+            var result = query();
+
+            Console.WriteLine(result);
+        }
+
+        static LambdaExpression PrepareDynamicLinq(string expression, object args)
+        {
+            var parameters = new List<ParameterExpression>();
+
+            foreach(var prop in args.GetType().GetProperties())
+            {
+                var value = prop.GetValue(args);
+                var valueType = value.GetType();
+                parameters.Add(Expression.Parameter(valueType, prop.Name));
+            }
+
+            //note the first param 'p' becomes the 'it' in the dynamic linq
+            var dynamicLinqExpression = DE.ParseLambda(parameters.ToArray(), null, expression);
+
+            return dynamicLinqExpression;
+
+        }
+
+        static Delegate CompileDynamicLinq(string expression, object args)
+        {
+            return PrepareDynamicLinq(expression, args).Compile();
+        }
+
+    }
+
+    public static class DynamicLinqCustomTypes<T>
+    {
+        public static readonly Type Tester = DE.CreateClass(new DynamicProperty("IsMatch", typeof(Func<T, bool>)));
+
+        public static readonly Type IEnumerableTester = DE.CreateClass(new DynamicProperty("IsMatch", typeof(Func<IEnumerable<T>, T, bool>)));
+
+    }
+
+    public static class DynamicLinqCustomTypes
+    {
+        public static void SetTester<T>(this object instance, Func<T, bool> func)
+                                                                    => DynamicLinqCustomTypes<T>.Tester.GetProperty("IsMatch").SetValue(instance, func);
+        public static void SetIEnumerableTester<T>(this object instance, Type type, Func<IEnumerable<T>, T, bool> func)
+                                                                    => DynamicLinqCustomTypes<T>.IEnumerableTester.GetProperty("IsMatch").SetValue(instance, func);
+
+    }
+
+    public class Person
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+        public int Weight { get; set; }
+        public DateTime FavouriteDay { get; set; }
+    }
+
+}
